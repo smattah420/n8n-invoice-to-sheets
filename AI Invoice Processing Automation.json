@@ -1,0 +1,315 @@
+{
+  "name": "AI Invoice Processing Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFile",
+        "fileToWatch": {
+          "__rl": true,
+          "value": "1n3kNDb7yK3Seh9V8CY3YnLmROnplTv4fOW8BXcgtYT4",
+          "mode": "list",
+          "cachedResultName": "Event Registration",
+          "cachedResultUrl": "https://docs.google.com/forms/d/1n3kNDb7yK3Seh9V8CY3YnLmROnplTv4fOW8BXcgtYT4/edit?usp=drivesdk"
+        }
+      },
+      "id": "d57bc12d-ffb9-4365-9a32-e860dc1f6a0e",
+      "name": "Google Drive Trigger (Incoming Invoices)",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        112
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "pVJm9tsWRpL3v8pp",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{ $json.id }}",
+        "options": {}
+      },
+      "id": "53e28a64-a977-481f-9cfa-2280c85d545c",
+      "name": "Download PDF Invoice",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 2,
+      "position": [
+        224,
+        112
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "pVJm9tsWRpL3v8pp",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "6f7232de-6903-4e72-a5de-124891adf5f7",
+      "name": "Read PDF Content",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        448,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0
+        },
+        "requestOptions": {}
+      },
+      "id": "3bbfe3f2-584d-4991-afad-2b566fbecfda",
+      "name": "AI Invoice Extractor",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        672,
+        112
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse extracted AI JSON output\nlet extracted = {};\ntry {\n  const rawText = $input.item.json.message.content.replace(/```json|```/g, '').trim();\n  extracted = JSON.parse(rawText);\n} catch (e) {\n  return [{\n    json: {\n      status: 'Rejected - Parsing Failed',\n      reason: 'Failed to parse AI output into JSON',\n      rawOutput: $input.item.json.message.content\n    }\n  }];\n}\n\nconst subtotal = Number(extracted.subtotal || 0);\nconst tax = Number(extracted.tax || 0);\nconst total = Number(extracted.total || 0);\nconst calculatedTotal = Number((subtotal + tax).toFixed(2));\n\n// Validation Rules\nconst isMathValid = Math.abs(calculatedTotal - total) <= 0.05;\nconst missingFields = ['vendor', 'date', 'total'].filter(f => !extracted[f]);\n\nlet status = 'Pending Approval';\nlet isApproved = true;\nlet reason = 'Math & Data Validated Successfully';\n\nif (!isMathValid) {\n  status = 'Flagged - Math Mismatch';\n  isApproved = false;\n  reason = `Subtotal (${subtotal}) + Tax (${tax}) does not match Total (${total})`;\n} else if (missingFields.length > 0) {\n  status = 'Flagged - Missing Fields';\n  isApproved = false;\n  reason = `Missing required fields: ${missingFields.join(', ')}`;\n}\n\nreturn [{\n  json: {\n    invoice_id: extracted.invoice_id || 'N/A',\n    vendor: extracted.vendor || 'Unknown',\n    date: extracted.date || 'N/A',\n    subtotal: subtotal,\n    tax: tax,\n    total: total,\n    status: status,\n    isApproved: isApproved,\n    reason: reason\n  }\n}];"
+      },
+      "id": "4b5614b7-10fa-4362-bba5-dd036f311f58",
+      "name": "Validate Extracted Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isApproved }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "cfb0faf6-3e45-4e2d-8810-6a7567a0ef8f",
+      "name": "Check Approval Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d5ecd220-0156-47dd-a414-2ad6eb037d7a",
+      "name": "Log Validated Record to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1328,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "nKgDNarLSLlUMlTO",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "finance-team@company.com",
+        "subject": "=Invoice Approval Request: {{ $json.vendor }} - {{ $json.invoice_id }}",
+        "message": "=Hello Finance Team,\n\nA new invoice has been processed and requires your approval:\n\n- Invoice ID: {{ $json.invoice_id }}\n- Vendor: {{ $json.vendor }}\n- Date: {{ $json.date }}\n- Subtotal: ${{ $json.subtotal }}\n- Tax: ${{ $json.tax }}\n- Total Amount: ${{ $json.total }}\n- Status: {{ $json.status }}\n\nPlease review and approve the entry in the Google Sheet tracker.\n\nBest regards,\nAI Automated Processing",
+        "options": {}
+      },
+      "id": "99afdf85-1817-4b93-ad29-918686da913f",
+      "name": "Notify Finance Team (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        0
+      ],
+      "webhookId": "8cffc273-8a83-468f-8b43-aaebf9919318",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "kaIqy0mxFPAbrZM5",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "finance-team@company.com",
+        "subject": "=ALERT: Invoice Validation Issue - {{ $json.vendor }}",
+        "message": "=Attention Finance Team,\n\nAn incoming invoice failed automated validation:\n\n- Vendor: {{ $json.vendor }}\n- Issue Reason: {{ $json.reason }}\n- Status: {{ $json.status }}\n\nPlease inspect the uploaded file manually.",
+        "options": {}
+      },
+      "id": "afee1fe6-ba85-4831-ab62-b1f9e93e5b63",
+      "name": "Notify Exception to Finance",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        208
+      ],
+      "webhookId": "f9fd8db2-7336-4636-8cb5-41fc535ee5d8",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "kaIqy0mxFPAbrZM5",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Drive Trigger (Incoming Invoices)": {
+      "main": [
+        [
+          {
+            "node": "Download PDF Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF Invoice": {
+      "main": [
+        [
+          {
+            "node": "Read PDF Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PDF Content": {
+      "main": [
+        [
+          {
+            "node": "AI Invoice Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Invoice Extractor": {
+      "main": [
+        [
+          {
+            "node": "Validate Extracted Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Extracted Data": {
+      "main": [
+        [
+          {
+            "node": "Check Approval Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Approval Status": {
+      "main": [
+        [
+          {
+            "node": "Log Validated Record to Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Exception to Finance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Validated Record to Sheets": {
+      "main": [
+        [
+          {
+            "node": "Notify Finance Team (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "6ab1b1fd-b281-4024-9d30-c3c374056e64",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9b6d553ba0b1f2d80f8d61968c0de8e067456c5823865c7afc70c331482e437b"
+  },
+  "nodeGroups": [],
+  "id": "PLvvzG01O4MYg5O0",
+  "tags": []
+}
